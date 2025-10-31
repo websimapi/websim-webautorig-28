@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { Viewer } from './viewer.js';
 import { rigCharacter } from './rigging.js';
 import { detectPoseAndPlaceMarkers } from './pose_detection.js';
