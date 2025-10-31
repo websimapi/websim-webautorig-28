@@ -173,36 +173,30 @@ export class App {
     }
 
     async bakeAnimationWithCollisions(clip) {
-        const model = this.previewViewer.model;
-        const mixer = this.previewViewer.mixer;
-        const collisionManager = this.previewViewer.collisionManager;
-
-        // Return original clip if required components are not available.
-        if (!model || !mixer || !collisionManager || !clip) {
+        const viewer = this.previewViewer;
+        if (!viewer || !viewer.model || !viewer.mixer || !viewer.collisionManager || !clip) {
             return clip;
         }
-
+    
+        const originalAnimation = this.previewControls.getCurrentAnimation();
+        
         // --- Setup for baking process ---
-        const originalTimeScale = mixer.timeScale;
-        mixer.timeScale = 0; // Pause the mixer to control it manually.
-
-        const action = mixer.clipAction(clip);
+        viewer.mixer.stopAllAction();
+        const action = viewer.mixer.clipAction(clip);
         action.play();
-
-        const sampleRate = 30; // Bake at 30 FPS for standard animation quality.
+    
+        const sampleRate = 30;
         const duration = clip.duration;
         const step = 1 / sampleRate;
         const numFrames = Math.floor(duration * sampleRate);
-
-        // Find the skeleton to access all bones.
+    
         let skeleton;
-        model.traverse(child => {
+        viewer.model.traverse(child => {
             if (child.isSkinnedMesh) skeleton = child.skeleton;
         });
         if (!skeleton) return clip;
         const bones = skeleton.bones;
-
-        // Initialize data structures to hold the baked keyframes for each bone.
+    
         const newTracks = {};
         bones.forEach(bone => {
             newTracks[bone.name] = {
@@ -211,24 +205,23 @@ export class App {
                 scale: { times: [], values: [] },
             };
         });
-
+    
         // --- Baking Loop: Step through animation and record transforms ---
         for (let i = 0; i <= numFrames; i++) {
             const time = i * step;
             
-            // 1. Pose the skeleton at the current animation time.
-            mixer.setTime(time);
+            // 1. Update the animation to the current time and apply collisions.
+            viewer.mixer.setTime(time);
+            viewer.collisionManager.update();
+            skeleton.update(); // Ensure all bone matrices are globally up-to-date
             
-            // 2. Apply the dynamic collision correction for this pose.
-            collisionManager.update();
-            
-            // 3. Sample and store the final bone transforms.
+            // 2. Sample and store the final bone transforms.
             bones.forEach(bone => {
                 const trackData = newTracks[bone.name];
                 
                 trackData.position.times.push(time);
                 bone.position.toArray(trackData.position.values, trackData.position.values.length);
-
+    
                 trackData.quaternion.times.push(time);
                 bone.quaternion.toArray(trackData.quaternion.values, trackData.quaternion.values.length);
                 
@@ -236,20 +229,14 @@ export class App {
                 bone.scale.toArray(trackData.scale.values, trackData.scale.values.length);
             });
         }
-
+    
         // --- Cleanup and Restore State ---
-        action.stop();
-        mixer.timeScale = originalTimeScale; // Restore mixer's original speed.
-        mixer.setTime(0); // Reset mixer to the beginning.
-        
-        // Restore the skeleton to its default pose.
+        viewer.mixer.stopAllAction();
         skeleton.pose();
         
         // Resume playing the animation that was active before baking.
-        const currentAnimation = this.previewControls.getCurrentAnimation();
-        this.previewViewer.playAnimation(currentAnimation);
-
-
+        viewer.playAnimation(originalAnimation);
+    
         // --- Create a new AnimationClip with the baked tracks ---
         const finalTracks = [];
         for (const boneName in newTracks) {
@@ -264,7 +251,7 @@ export class App {
                 `${boneName}.scale`, trackData.scale.times, trackData.scale.values
             ));
         }
-
+    
         const bakedClip = new THREE.AnimationClip(`${clip.name}_baked`, duration, finalTracks);
         return bakedClip;
     }
